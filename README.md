@@ -8,7 +8,7 @@
 
 설치 필요 없음 · 파이썬 필요 없음 · exe 하나로 끝
 
-[다운로드](release/엑셀Unlock_V0.5.zip) · [51work.bid](https://51work.bid)
+[⬇ 다운로드 (1.7MB)](https://github.com/aibulapia/XLS-unlock/raw/main/release/XLS-unlock_v0.5.zip) · [51work.bid](https://51work.bid)
 
 </div>
 
@@ -22,7 +22,7 @@
 
 ## 쓰는 법
 
-1. `release/엑셀Unlock_V0.5.zip` 을 받아서 압축을 풉니다
+1. [`XLS-unlock_v0.5.zip`](https://github.com/aibulapia/XLS-unlock/raw/main/release/XLS-unlock_v0.5.zip) 을 받아서 압축을 풉니다
 2. `엑셀 Unlock.exe` 를 아무 폴더에나 두고 실행합니다
 3. 엑셀 파일을 창 안에 끌어다 놓습니다 (여러 개 한꺼번에 가능)
 
