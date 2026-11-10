@@ -1,0 +1,31 @@
+[package]
+name = "excel_unlock"
+version = "0.5.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "excel_unlock"
+path = "src/main.rs"
+
+[[bin]]
+name = "coretest"
+path = "src/bin/coretest.rs"
+
+[dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+regex = "1"
+
+[target.'cfg(windows)'.dependencies]
+native-windows-gui = { version = "1.0.13", features = ["file-dialog", "message-window", "rich-textbox", "textbox", "frame", "embed-resource", "notice", "high-dpi", "image-decoder"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

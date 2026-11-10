@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- 스프레드시트 격자 -->
+  <rect x="6" y="14" width="36" height="36" rx="4" fill="#1a7a3c"/>
+  <path d="M6 26h36M6 38h36M18 14v36M30 14v36" stroke="#ffffff" stroke-width="2.6"/>
+  <!-- 첫 칸의 X -->
+  <path d="M9.2 17.2l5.9 5.9M15.1 17.2l-5.9 5.9" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <!-- 열린 자물쇠 고리 -->
+  <path d="M38 36v-6a9 9 0 0 1 18 0" fill="none" stroke="#2b2b2b" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- 자물쇠 몸통 -->
+  <rect x="32" y="35" width="26" height="21" rx="4.5" fill="#f5b700"/>
+  <circle cx="45" cy="43.5" r="3.4" fill="#2b2b2b"/>
+  <rect x="43.4" y="45" width="3.2" height="6" rx="1.6" fill="#2b2b2b"/>
+</svg>
