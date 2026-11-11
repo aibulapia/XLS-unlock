@@ -1,0 +1,40 @@
+// exe 에 박아 넣는 리소스: 아이콘 / 버전정보 / 매니페스트
+//
+// MSVC 툴체인(llvm-rc)과 mingw 툴체인(windres) 양쪽에서 같이 쓴다.
+// 저장 인코딩은 UTF-8 이고, 컴파일할 때 코드페이지 65001 을 지정한다.
+
+#define IDI_APP      1
+#define RT_MANIFEST_ID 1
+
+IDI_APP ICON "app.ico"
+
+RT_MANIFEST_ID 24 "app.manifest"
+
+1 VERSIONINFO
+FILEVERSION     0,7,0,0
+PRODUCTVERSION  0,7,0,0
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          0x40004L
+FILETYPE        0x1L
+FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041204B0"
+        BEGIN
+            VALUE "CompanyName",      "51work.bid"
+            VALUE "FileDescription",  "엑셀 Unlock - 엑셀 시트보호 해제"
+            VALUE "FileVersion",      "0.7.0.0"
+            VALUE "InternalName",     "excel_unlock"
+            VALUE "LegalCopyright",   "KIM.H,J - 51work.bid"
+            VALUE "OriginalFilename", "엑셀 Unlock.exe"
+            VALUE "ProductName",      "엑셀 Unlock"
+            VALUE "ProductVersion",   "0.7.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x412, 1200
+    END
+END

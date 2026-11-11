@@ -130,15 +130,28 @@ fn is_target(name: &str) -> bool {
         && name.ends_with(".xml")
 }
 
+/// 파일 종류
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    /// .xlsx / .xlsm — 속이 ZIP
+    Zip,
+    /// .xls — 속이 OLE 복합 문서 (BIFF8)
+    Ole,
+}
+
+/// 확장자로 종류를 가린다 (대소문자 무시). 대상이 아니면 None.
+pub fn kind_of(path: &Path) -> Option<Kind> {
+    let e = path.extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    match e.as_str() {
+        "xlsx" | "xlsm" => Some(Kind::Zip),
+        "xls" => Some(Kind::Ole),
+        _ => None,
+    }
+}
+
 /// 확장자가 대상인가 (대소문자 무시)
 pub fn is_excel_ext(path: &Path) -> bool {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some(e) => {
-            let e = e.to_ascii_lowercase();
-            e == "xlsx" || e == "xlsm"
-        }
-        None => false,
-    }
+    kind_of(path).is_some()
 }
 
 /// 비어 있는 이름을 찾는다.
@@ -224,12 +237,12 @@ pub fn unlock_one(src: &Path, mode: &SaveMode, pat: &Patterns) -> Outcome {
     if !src.exists() {
         return Outcome::Failed(format!("{} — 파일을 찾을 수 없습니다", file_name_of(src)));
     }
-    if !is_excel_ext(src) {
+    let Some(kind) = kind_of(src) else {
         return Outcome::Skipped(format!(
-            "{} — xlsx/xlsm 파일이 아닙니다",
+            "{} — xlsx/xlsm/xls 파일이 아닙니다",
             file_name_of(src)
         ));
-    }
+    };
 
     // 이미 해제된 결과물을 다시 넣는 실수를 막는다
     if let Some(stem) = src.file_stem().and_then(|s| s.to_str()) {
@@ -241,12 +254,29 @@ pub fn unlock_one(src: &Path, mode: &SaveMode, pat: &Patterns) -> Outcome {
         }
     }
 
-    // 열기 암호가 걸린 파일은 ZIP 이 아니라 OLE 컨테이너다.
-    // 헤더 두 글자로 먼저 걸러내면 쓸데없이 파일을 만들지 않는다.
-    match is_zip(src) {
-        Ok(false) => return Outcome::Encrypted,
-        Err(e) => return Outcome::Failed(format!("{} — 열 수 없습니다: {e}", file_name_of(src))),
-        Ok(true) => {}
+    // 속을 확인한다. 확장자만 믿으면 안 된다.
+    //  - xlsx/xlsm 인데 ZIP 이 아니면 -> 열기 암호가 걸린 것
+    //  - xls 인데 OLE 가 아니면 -> 웹에서 내려받은 HTML 을 .xls 로 저장한 것
+    match kind {
+        Kind::Zip => match is_zip(src) {
+            Ok(false) => return Outcome::Encrypted,
+            Err(e) => {
+                return Outcome::Failed(format!("{} — 열 수 없습니다: {e}", file_name_of(src)))
+            }
+            Ok(true) => {}
+        },
+        Kind::Ole => match crate::xls::is_ole(src) {
+            Ok(false) => {
+                return Outcome::Skipped(format!(
+                    "{} — 이름만 .xls 이고 실제로는 엑셀 파일이 아닙니다 (보호 없음)",
+                    file_name_of(src)
+                ))
+            }
+            Err(e) => {
+                return Outcome::Failed(format!("{} — 열 수 없습니다: {e}", file_name_of(src)))
+            }
+            Ok(true) => {}
+        },
     }
 
     let out_dir = match resolve_out_dir(src, mode) {
@@ -271,32 +301,59 @@ pub fn unlock_one(src: &Path, mode: &SaveMode, pat: &Patterns) -> Outcome {
         .to_string();
     let out = next_free_name(&out_dir, &stem, &ext);
 
+    match kind {
+        Kind::Zip => unlock_zip(src, &out, pat),
+        Kind::Ole => unlock_ole(src, &out),
+    }
+}
+
+/// xlsx / xlsm : ZIP 을 다시 묶으면서 보호 태그를 지운다
+fn unlock_zip(src: &Path, out: &Path, pat: &Patterns) -> Outcome {
     let fin = match File::open(src) {
         Ok(f) => f,
         Err(e) => return Outcome::Failed(format!("{} — 열 수 없습니다: {e}", file_name_of(src))),
     };
-    let fout = match File::create(&out) {
+    let fout = match File::create(out) {
         Ok(f) => f,
         Err(e) => {
-            return Outcome::Failed(format!(
-                "{} — 저장하지 못했습니다: {e}",
-                file_name_of(src)
-            ))
+            return Outcome::Failed(format!("{} — 저장하지 못했습니다: {e}", file_name_of(src)))
         }
     };
 
-    let result = rewrite(BufReader::new(fin), BufWriter::new(fout), pat);
-
-    match result {
-        Ok(0) => Outcome::NoProtection { out },
-        Ok(n) => Outcome::Unlocked { out, removed: n },
+    match rewrite(BufReader::new(fin), BufWriter::new(fout), pat) {
+        Ok(0) => Outcome::NoProtection { out: out.to_path_buf() },
+        Ok(n) => Outcome::Unlocked { out: out.to_path_buf(), removed: n },
         Err(e) => {
             // 실패하면 반쯤 쓰다 만 파일을 남기지 않는다
-            let _ = fs::remove_file(&out);
+            let _ = fs::remove_file(out);
             match e {
                 zip::result::ZipError::InvalidArchive(_) => Outcome::Encrypted,
                 other => Outcome::Failed(format!("{} — 실패: {other}", file_name_of(src))),
             }
+        }
+    }
+}
+
+/// xls : 복사해 두고 그 안에서 보호 값만 0 으로 덮는다
+fn unlock_ole(src: &Path, out: &Path) -> Outcome {
+    if let Err(e) = fs::copy(src, out) {
+        return Outcome::Failed(format!("{} — 복사하지 못했습니다: {e}", file_name_of(src)));
+    }
+
+    match crate::xls::unlock_in_place(out) {
+        crate::xls::XlsResult::Unlocked(n) => {
+            Outcome::Unlocked { out: out.to_path_buf(), removed: n }
+        }
+        crate::xls::XlsResult::NoProtection => {
+            Outcome::NoProtection { out: out.to_path_buf() }
+        }
+        crate::xls::XlsResult::Encrypted => {
+            let _ = fs::remove_file(out);
+            Outcome::Encrypted
+        }
+        crate::xls::XlsResult::Failed(m) => {
+            let _ = fs::remove_file(out);
+            Outcome::Failed(format!("{} — {m}", file_name_of(src)))
         }
     }
 }

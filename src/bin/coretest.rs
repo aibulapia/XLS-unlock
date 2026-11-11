@@ -3,6 +3,8 @@
 
 #[path = "../core.rs"]
 mod core;
+#[path = "../xls.rs"]
+mod xls;
 
 use core::{unlock_one, Outcome, Patterns, SaveMode};
 use std::path::PathBuf;

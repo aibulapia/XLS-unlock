@@ -1,55 +1,95 @@
 // exe 에 아이콘 / 버전정보 / 매니페스트를 박아 넣는다.
 //
-// 주의: 빌드 스크립트는 빌드하는 쪽(여기서는 리눅스)에서 돌아간다.
-// 그래서 #[cfg(windows)] 로 감싸면 안 된다. 그러면 통째로 건너뛴다.
+// 두 가지 툴체인을 모두 지원한다.
+//   - MSVC  (x86_64-pc-windows-msvc) : llvm-rc 또는 rc.exe  -> .res
+//   - mingw (x86_64-pc-windows-gnu)  : windres              -> .o
+//
+// 배포본은 MSVC 로 만드는 쪽이 낫다. mingw 로 만든 exe 는
+// 섹션 구성(.CRT/.tls/.xdata)이 백신 휴리스틱에 자주 걸려
+// "바이러스 발견"으로 잘못 잡히는 일이 많다.
+//
+// 주의: 빌드 스크립트는 *빌드하는 쪽*(여기서는 리눅스)에서 돌아간다.
+// 그래서 #[cfg(windows)] 로 감싸면 통째로 건너뛴다.
 // 만들려는 쪽이 윈도우인지는 CARGO_CFG_TARGET_OS 로 봐야 한다.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/app.ico");
     println!("cargo:rerun-if-changed=assets/app.manifest");
+    println!("cargo:rerun-if-changed=assets/resource.rc");
     println!("cargo:rerun-if-changed=build.rs");
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os != "windows" {
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
         return;
     }
 
-    let mut res = winres::WindowsResource::new();
-    res.set_icon("assets/app.ico");
-    res.set_manifest_file("assets/app.manifest");
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR 은 항상 있다"));
+    let assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let rc = assets.join("resource.rc");
 
-    res.set("FileDescription", "엑셀 Unlock - 엑셀 시트보호 해제");
-    res.set("ProductName", "엑셀 Unlock");
-    res.set("FileVersion", "0.5.0.0");
-    res.set("ProductVersion", "0.5.0.0");
-    res.set("LegalCopyright", "KIM.H,J - 51work.bid");
-    res.set("OriginalFilename", "엑셀 Unlock.exe");
-    res.set("CompanyName", "51work.bid");
-    // 한국어(0x0412)
-    res.set_language(0x0412);
-
-    // 리눅스에서 윈도우용으로 만들 때는 mingw 쪽 도구를 써야 한다
-    let host = std::env::var("HOST").unwrap_or_default();
-    if !host.contains("windows") {
-        res.set_windres_path("x86_64-w64-mingw32-windres");
-        res.set_ar_path("x86_64-w64-mingw32-ar");
-    }
-
-    // 리소스 임베드에 실패하면 빌드를 멈춘다.
-    // 조용히 넘어가면 아이콘 없는 exe 가 나와도 알아채지 못한다.
-    if let Err(e) = res.compile() {
-        panic!("리소스(아이콘/매니페스트) 임베드에 실패했습니다: {e}");
-    }
-
-    // winres 는 리소스를 정적 라이브러리(libresource.a)로 넘긴다.
-    // 그런데 거기 들어 있는 오브젝트는 코드에서 부르는 심볼이 없어서
-    // 링커가 "안 쓰네" 하고 통째로 버린다. 그러면 아이콘도 매니페스트도 사라진다.
-    // 오브젝트 파일을 직접 링크해서 반드시 들어가게 한다.
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR 은 항상 있다");
-    let obj = std::path::Path::new(&out_dir).join("resource.o");
-    if obj.exists() {
-        println!("cargo:rustc-link-arg-bins={}", obj.display());
+    let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let artifact = if env == "msvc" {
+        build_res(&rc, &assets, &out_dir)
     } else {
-        panic!("리소스 오브젝트를 찾지 못했습니다: {}", obj.display());
-    }
+        build_obj(&rc, &assets, &out_dir)
+    };
+
+    // winres 처럼 정적 라이브러리로 넘기면 링커가 "참조가 없다"며 통째로 버린다.
+    // 그러면 아이콘도 매니페스트도 조용히 사라진다. 직접 링크해야 한다.
+    println!("cargo:rustc-link-arg-bins={}", artifact.display());
+}
+
+/// MSVC 툴체인: .rc -> .res
+fn build_res(rc: &Path, assets: &Path, out_dir: &Path) -> PathBuf {
+    let out = out_dir.join("resource.res");
+    let tool = first_available(&["llvm-rc", "llvm-rc-18", "rc.exe", "rc"])
+        .expect("리소스 컴파일러를 찾지 못했습니다 (llvm-rc 또는 rc.exe 가 필요합니다)");
+
+    // /C 65001 : .rc 파일이 UTF-8 이라고 알려준다. 없으면 한글이 깨진다.
+    let st = Command::new(&tool)
+        .current_dir(assets)
+        .args(["/C", "65001", "/FO"])
+        .arg(&out)
+        .arg(rc)
+        .status()
+        .unwrap_or_else(|e| panic!("{tool} 실행 실패: {e}"));
+
+    assert!(st.success(), "{tool} 가 리소스 컴파일에 실패했습니다");
+    out
+}
+
+/// mingw 툴체인: .rc -> .o
+fn build_obj(rc: &Path, assets: &Path, out_dir: &Path) -> PathBuf {
+    let out = out_dir.join("resource.o");
+    let tool = first_available(&["x86_64-w64-mingw32-windres", "windres"])
+        .expect("windres 를 찾지 못했습니다 (mingw-w64 가 필요합니다)");
+
+    let st = Command::new(&tool)
+        .current_dir(assets)
+        .args(["--codepage", "65001", "-i"])
+        .arg(rc)
+        .arg("-o")
+        .arg(&out)
+        .args(["-O", "coff"])
+        .status()
+        .unwrap_or_else(|e| panic!("{tool} 실행 실패: {e}"));
+
+    assert!(st.success(), "{tool} 가 리소스 컴파일에 실패했습니다");
+    out
+}
+
+/// 후보 중 실제로 실행 가능한 첫 번째를 고른다
+fn first_available(names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .find(|n| {
+            Command::new(n)
+                .arg("/?")
+                .output()
+                .or_else(|_| Command::new(n).arg("--version").output())
+                .is_ok()
+        })
+        .map(|s| s.to_string())
 }
